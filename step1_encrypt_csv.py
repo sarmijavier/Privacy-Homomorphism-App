@@ -1,32 +1,5 @@
-"""
-STEP 1 — CSV Encryption
-==========================
-It reads a csv file and encrypt each cell with Privacy Homomorphism
-di Domingo-Ferrer (2002).
-
-Output
-------
-encrypted_data.csv   — a csv file where each cell contains the ciphertext json serialized.
-key.json             — secret key (m, d, r, m_prime, r_inv, r_pows, r_inv_pows)
-metadata.json        — public patrams (m, d) + decimal_places for each column.
-
-Cell format in csv
------------------------------------------
-  [["1","<big_int_str>"],["2","<big_int_str>"],["3","<big_int_str>"]]
-where each couple ["r", "value_mod_m"] is a component of the cipher vector.
-Values are serialized as bug inter (~200 digits)
-
-Run
---------
-  python step1_encrypt_csv.py data.csv
-  python step1_encrypt_csv.py data.csv --digits 200 --d 3
-"""
-
 import csv
 import json
-import sys
-import argparse
-from pathlib import Path
 from domingo_ferrer_2002 import keygen, encrypt
 
 
@@ -163,7 +136,7 @@ def encrypt_csv(
 if __name__ == "__main__":
 
     encrypt_csv(
-        input_path=r"C:\Users\riovi\Privacy-Homomorphism-App\diabetes.csv",
+        input_path=r"diabetes.csv",
         digits=200,
         d=3,
         out_enc="diabetes_encrypted.csv",

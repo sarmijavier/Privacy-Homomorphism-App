@@ -1,57 +1,7 @@
-"""
-Domingo-Ferrer (2002) Privacy Homomorphism
-===========================================
-Faithful implementation of the scheme described in:
-
-  Josep Domingo-Ferrer, "A provably secure additive and multiplicative
-  privacy homomorphism", ISC 2002, LNCS 2433, pp. 471-483, Springer.
-
-SCHEME OVERVIEW
----------------
-Public parameters : (m, d)
-  m  — large modulus, ≈ 10^200 (arbitrary-precision; trivial in Python).
-       Should have many small divisors AND many coprime residues (high φ(m)/m).
-       In a minimal deployment m can be prime; in a full deployment m is a
-       smooth-ish composite and m' is a proper small divisor.
-  d  — splitting factor (recommended d > 2; d = 2 only in the paper's example).
-
-Secret key : (r, m')
-  r  — random element of Z*_m (invertible mod m).
-  m' — a divisor of m that defines the *cleartext* space Z_{m'}.
-       s = log_{m'}(m) is the security parameter (see Corollary 13 of the paper).
-       The larger s is relative to n (number of known plaintext-ciphertext pairs),
-       the smaller the probability of a successful key-guessing attack.
-
-Encryption  Ek(a):
-  1. Randomly split a ∈ Z_{m'} into d parts a_1,…,a_d with Σa_j ≡ a (mod m').
-  2. Return the vector  (a_1·r^1 mod m,  a_2·r^2 mod m,  …,  a_d·r^d mod m).
-  Each component is labelled by its *r-degree* (1 through d).
-
-Decryption  Dk(C):
-  For each r-degree j:  a_j = C[j] · r^{-j}  (mod m).
-  Result:  (Σ a_j)  mod m'.
-
-Homomorphic operations (no key required — done on ciphertext only):
-  Addition / Subtraction : componentwise  (matching r-degrees).
-  Scalar multiplication  : multiply every component by the scalar.
-  Full multiplication    : polynomial multiplication over Z_m
-                           (doubles max r-degree, like multiplying two polynomials).
-  Linear combination     : Σ k_i · Ek(a_i)  ->  Ek(Σ k_i · a_i).
-
-Security (Corollary 13):
-  With n known plaintext-ciphertext pairs and security parameter s = log_{m'}(m),
-  the probability of random key guessing is at most  π²·(m')^{n-s} / 6  when s > n.
-  This can be made arbitrarily small by choosing s large enough.
-"""
-
 import secrets
 import math
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # Internal arithmetic utilities
-# ═══════════════════════════════════════════════════════════════════════════════
-
 def _ext_gcd(a: int, b: int) -> tuple[int, int, int]:
     """Extended Euclidean algorithm.  Returns (gcd, x, y) with a·x + b·y = gcd."""
     if a == 0:
@@ -111,73 +61,44 @@ def generate_large_prime(num_decimal_digits: int = 200) -> int:
         if miller_rabin(c):
             return c
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # Key generation
-# ═══════════════════════════════════════════════════════════════════════════════
-
 def keygen(
     num_decimal_digits: int = 200,
+    m_prime_digits: int = 10,
     d: int = 3,
     verbose: bool = True,
 ) -> dict:
-    """
-    Generate system parameters and secret key.
-
-    Parameters
-    ----------
-    num_decimal_digits : int
-        Desired number of decimal digits for the public modulus m (≥ 200 per paper).
-    d : int
-        Splitting factor.  d > 2 recommended; d = 2 used only in the paper's example.
-    verbose : bool
-        Print progress messages.
-
-    Returns
-    -------
-    dict with keys:
-        m        — public modulus (large integer, ~10^{num_decimal_digits})
-        d        — splitting factor (public)
-        r        — secret multiplier (r^{-1} mod m must exist)
-        m_prime  — secret cleartext modulus (divisor of m); cleartext space = Z_{m'}
-        s        — security parameter  s = log_{m'}(m)  (informational)
-        r_inv    — precomputed r^{-1} mod m (used in decryption)
-        r_pows   — precomputed (r^1, r^2, …, r^d) mod m (used in encryption)
-        r_inv_pows — precomputed (r^{-1}, r^{-2}, …, r^{-max_degree}) mod m
-    """
     if verbose:
-        print(f"[keygen] Generating {num_decimal_digits}-digit prime modulus m …")
+        print(f"[keygen] Generating keys with |m|={num_decimal_digits} and |m'|={m_prime_digits} ...")
 
-    # ── m: large prime (simplest compliant choice; composite also valid) ──────
-    m = generate_large_prime(num_decimal_digits)
+    # ── m': secret cleartext modulus (small) ─────────────────────────────────
+    m_prime = generate_large_prime(m_prime_digits)
+
+    # ── q: large prime factor to construct m ─────────────────────────────────
+    q_digits = num_decimal_digits - m_prime_digits
+    q = generate_large_prime(q_digits)
+
+    # ── m: composite public modulus, strictly a multiple of m' ───────────────
+    m = m_prime * q
 
     if verbose:
-        print(f"[keygen] m = {str(m)[:48]}… ({m.bit_length()} bits, "
-              f"{len(str(m))} decimal digits)")
+        print(f"[keygen] m' = {m_prime} ({m_prime.bit_length()} bits, {len(str(m_prime))} decimal digits)")
+        print(f"[keygen] m  = {str(m)[:48]}... ({m.bit_length()} bits, {len(str(m))} decimal digits)")
 
     # ── r: random invertible element of Z_m ──────────────────────────────────
-    # Since m is prime every nonzero element is invertible.
     r = secrets.randbelow(m - 2) + 2
     while math.gcd(r, m) != 1:
         r = secrets.randbelow(m - 2) + 2
 
-    # ── m': secret cleartext modulus, a divisor of m ─────────────────────────
-    # When m is prime the only proper divisors are 1 and m itself.
-    # We use m' = m so the cleartext space is Z_m  (full residue class ring).
-    # In a composite-m deployment one would choose m' as a small secret factor.
-    m_prime = m
-
     # ── precompute powers for efficiency ─────────────────────────────────────
     r_inv = mod_inv(r, m)
-    r_pows     = [pow(r,     j, m) for j in range(1, d + 1)]      # r^1 … r^d
-    # For decryption after multiplication the r-degree can reach 2d (or more
-    # with repeated multiplications).  We precompute up to 4d to be safe.
+    r_pows     = [pow(r,     j, m) for j in range(1, d + 1)]      
+    
     max_deg = 4 * d
-    r_inv_pows = [pow(r_inv, j, m) for j in range(1, max_deg + 1)]  # r^{-1} … r^{-4d}
+    r_inv_pows = [pow(r_inv, j, m) for j in range(1, max_deg + 1)]  
 
     # ── security parameter s = log_{m'}(m) ───────────────────────────────────
-    # Since m' = m here, s = 1. In a composite deployment with m' ≪ m, s ≫ 1.
-    s = math.log(m) / math.log(m_prime) if m_prime > 1 else float('inf')
+    s = math.log(m) / math.log(m_prime)
 
     if verbose:
         print(f"[keygen] d = {d},  security parameter s = log_{{m'}}(m) = {s:.4f}")
@@ -193,36 +114,9 @@ def keygen(
         "r_inv_pows": r_inv_pows,
     }
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # Encryption
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def encrypt(a: int, key: dict) -> dict[int, int]:
-    """
-    Encrypt plaintext a ∈ Z_{m'}.
-
-    Algorithm (Section 2 of the paper)
-    ------------------------------------
-    1. Randomly split a into d parts a_1, …, a_d in Z_m such that
-       a_1 + … + a_d ≡ a  (mod m').
-       Parts a_1, …, a_{d-1} are chosen uniformly at random; a_d is set to
-       satisfy the congruence.
-    2. For j = 1, …, d compute  c_j = a_j · r^j  (mod m).
-    3. Return  { j: c_j }  — a dict mapping r-degree to ciphertext component.
-
-    The fresh randomness in the split makes encryption *probabilistic*:
-    the same plaintext produces a different ciphertext every call.
-
-    Parameters
-    ----------
-    a   : plaintext integer in [0, m')
-    key : dict returned by keygen()
-
-    Returns
-    -------
-    dict  { r_degree (int) : ciphertext_component (int) }
-    """
     m       = key["m"]
     d       = key["d"]
     m_prime = key["m_prime"]
@@ -232,7 +126,13 @@ def encrypt(a: int, key: dict) -> dict[int, int]:
 
     # ── random split ─────────────────────────────────────────────────────────
     parts = [secrets.randbelow(m) for _ in range(d - 1)]
-    last  = (a - sum(parts)) % m_prime          # ensures Σ parts ≡ a (mod m')
+    # Base calculation restricted to [0, m_prime - 1]
+    last_base = (a - sum(parts)) % m_prime
+    
+    # Scale up randomly within Z_m to prevent data leakage
+    k_max = (m - 1 - last_base) // m_prime
+    k = secrets.randbelow(k_max + 1)
+    last = last_base + k * m_prime
     parts.append(last)
 
     # ── multiply each part by the corresponding power of r ───────────────────
@@ -242,35 +142,9 @@ def encrypt(a: int, key: dict) -> dict[int, int]:
 
     return ciphertext
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # Decryption
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def decrypt(ciphertext: dict[int, int], key: dict) -> int:
-    """
-    Decrypt a ciphertext vector back to Z_{m'}.
-
-    Algorithm (Section 2 of the paper)
-    ------------------------------------
-    For each r-degree j present in the ciphertext:
-        a_j = c_j · r^{-j}  (mod m)
-    Return  (Σ a_j)  mod m'.
-
-    This works for any ciphertext produced by a sequence of homomorphic
-    operations, as long as all r-degrees are within the precomputed range
-    (up to 4d by default; extend key["r_inv_pows"] if needed).
-
-    Parameters
-    ----------
-    ciphertext : dict { r_degree: component } — output of encrypt() or any
-                 homomorphic operation.
-    key        : dict returned by keygen().
-
-    Returns
-    -------
-    Plaintext integer in [0, m').
-    """
     m          = key["m"]
     m_prime    = key["m_prime"]
     r_inv_pows = key["r_inv_pows"]   # index j-1 gives r^{-j}
@@ -292,59 +166,23 @@ def decrypt(ciphertext: dict[int, int], key: dict) -> int:
 
     return total % m_prime
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # Homomorphic operations  (no key required)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def homo_add(c1: dict, c2: dict, m: int) -> dict:
-    """
-    Homomorphic addition:  C(a) ⊕ C(b)  →  C(a + b).
-
-    Components with the *same r-degree* are added componentwise mod m.
-    Components present in only one operand are copied as-is.
-    After decryption the result equals (a + b) mod m'.
-    """
     degrees = set(c1) | set(c2)
     return {j: (c1.get(j, 0) + c2.get(j, 0)) % m for j in degrees}
 
 
 def homo_sub(c1: dict, c2: dict, m: int) -> dict:
-    """
-    Homomorphic subtraction:  C(a) ⊖ C(b)  →  C(a − b).
-
-    Componentwise subtraction mod m for matching r-degrees.
-    After decryption the result equals (a − b) mod m'.
-    """
     degrees = set(c1) | set(c2)
     return {j: (c1.get(j, 0) - c2.get(j, 0)) % m for j in degrees}
 
 
 def homo_scalar_mul(k: int, c: dict, m: int) -> dict:
-    """
-    Homomorphic scalar multiplication:  k ⊗ C(a)  →  C(k · a).
-
-    Multiply every ciphertext component by the integer constant k mod m.
-    After decryption the result equals (k · a) mod m'.
-    r-degrees are *unchanged* (unlike full ciphertext multiplication).
-    """
     return {j: (k * cj) % m for j, cj in c.items()}
 
 
 def homo_mul(c1: dict, c2: dict, m: int) -> dict:
-    """
-    Homomorphic multiplication:  C(a) ⊗ C(b)  →  C(a · b).
-
-    Works exactly like polynomial multiplication over Z_m:
-    a term of r-degree i times a term of r-degree j yields a term of
-    r-degree i + j (contributions with the same output degree are summed).
-
-    ⚠  This operation *doubles* the maximum r-degree.  After k multiplications
-       starting from degree-d ciphertexts, the degree grows to d · 2^k.
-       Prefer homo_scalar_mul when one operand is a known constant.
-
-    After decryption the result equals (a · b) mod m'.
-    """
     result: dict[int, int] = {}
     for i, ci in c1.items():
         for j, cj in c2.items():
@@ -372,22 +210,9 @@ def homo_linear_combination(
         result = homo_add(result, kc, m)
     return result
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # Security analysis  (Theorem 7 and Corollary 13)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def security_analysis(m: int, m_prime: int, s: float, n_known: int) -> None:
-    """
-    Print a security report based on Theorem 7 and Corollary 13 of the paper.
-
-    Parameters
-    ----------
-    m        : public modulus
-    m_prime  : secret cleartext modulus (divisor of m)
-    s        : security parameter s = log_{m'}(m)
-    n_known  : number of known plaintext-ciphertext pairs available to the adversary
-    """
     print("\n" + "─" * 65)
     print("Security Analysis  (Domingo-Ferrer 2002, Theorem 7 / Corollary 13)")
     print("─" * 65)
@@ -442,18 +267,8 @@ def security_analysis(m: int, m_prime: int, s: float, n_known: int) -> None:
 
     print("─" * 65)
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # Validation: reproduce the Section 3 numerical example exactly
-# ═══════════════════════════════════════════════════════════════════════════════
-
 def _paper_example() -> None:
-    """
-    Reproduce the numerical example from Section 3 of the paper (d=2, m=28, r=3, m'=7).
-    Computes  (x1 + x2 + x3) · x4  with  (x1,x2,x3,x4) = (−0.1, 0.3, 0.1, 2).
-    The paper multiplies by 10 to work with integers: (−1, 3, 1, 2), denominator=10.
-    Expected result: 6/10 = 0.6.
-    """
     m = 28; d = 2; r = 3; m_prime = 7
     key = {
         "m": m, "d": d, "r": r, "m_prime": m_prime,
@@ -494,19 +309,8 @@ def _paper_example() -> None:
     assert numerator == 6, "Paper example mismatch!"
     print("  ✓ Exact match with paper")
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # Demo / self-test
-# ═══════════════════════════════════════════════════════════════════════════════
-
 def demo(digits: int = 200, d: int = 3) -> None:
-    """
-    Full demo:
-      1. Reproduce the paper's Section 3 example.
-      2. Keygen with a ~200-digit modulus.
-      3. Verify all homomorphic operations.
-      4. Run the security analysis.
-    """
     print("═" * 65)
     print("Domingo-Ferrer (2002) Privacy Homomorphism — Demo")
     print("═" * 65 + "\n")
@@ -582,8 +386,6 @@ def demo(digits: int = 200, d: int = 3) -> None:
     print("All tests passed.  ✓")
     print("═" * 65)
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     demo(digits=200, d=3)
